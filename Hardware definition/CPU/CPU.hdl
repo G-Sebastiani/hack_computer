@@ -1,0 +1,90 @@
+// This file is part of www.nand2tetris.org
+// and the book "The Elements of Computing Systems"
+// by Nisan and Schocken, MIT Press.
+// File name: projects/05/CPU.hdl
+
+/**
+ * The Hack CPU (Central Processing unit), consisting of an ALU,
+ * two registers named A and D, and a program counter named PC.
+ * The CPU is designed to fetch and execute instructions written in 
+ * the Hack machine language. In particular, functions as follows:
+ * Executes the inputted instruction according to the Hack machine 
+ * language specification. The D and A in the language specification
+ * refer to CPU-resident registers, while M refers to the external
+ * memory location addressed by A, i.e. to Memory[A]. The inM input 
+ * holds the value of this location. If the current instruction needs 
+ * to write a value to M, the value is placed in outM, the address 
+ * of the target location is placed in the addressM output, and the 
+ * writeM control bit is asserted. (When writeM==0, any value may 
+ * appear in outM). The outM and writeM outputs are combinational: 
+ * they are affected instantaneously by the execution of the current 
+ * instruction. The addressM and pc outputs are clocked: although they 
+ * are affected by the execution of the current instruction, they commit 
+ * to their new values only in the next time step. If reset==1 then the 
+ * CPU jumps to address 0 (i.e. pc is set to 0 in next time step) rather 
+ * than to the address resulting from executing the current instruction. 
+ */
+CHIP CPU {
+    IN  inM[16],         // M value input  (M = contents of RAM[A])
+        instruction[16], // Instruction for execution
+        reset;           // Signals whether to re-start the current
+                         // program (reset==1) or continue executing
+                         // the current program (reset==0).
+
+    OUT outM[16],        // M value output
+        writeM,          // Write to M? 
+        addressM[15],    // Address in data memory (of M)
+        pc[15];          // address of next instruction
+
+    PARTS:
+    // if (C-inst) close Register A
+    Mux16(a=instruction, b=aluOut, sel=instruction[15], out=toAreg);//OK
+    Not(in=instruction[15], out=Ainstr);
+    Or(a=Ainstr, b=instruction[5], out=writeA);
+    ARegister(in=toAreg, load=writeA, out=outA, out[0..14]=addressM); //A
+    // Operate on A or M
+    And(a=instruction[15], b=instruction[12], out=toA);
+    Mux16(a=outA, b=inM, sel=toA, out=inY);
+    // Do C-instruction
+    ALU(x=inX,
+        y=inY,
+        zx=instruction[11],
+        nx=instruction[10],
+        zy=instruction[9],
+        ny=instruction[8],
+        f=instruction[7],
+        no=instruction[6],
+        out=aluOut,
+        out=outM,
+        zr=zr,
+        ng=ng);
+    // Store output of ALU according to bit [3-5]
+    And(a=instruction[15], b=instruction[4], out=writeD);
+    DRegister(in=aluOut, load=writeD, out=inX); //D
+    And(a=instruction[15], b=instruction[3], out=writeM);
+    // Manage Jump conditions according to bit [0-2]
+    DMux8Way(in=true, sel=instruction[0..2], a=INC, b=JGT, c=JEQ, d=JGE, e=JLT, f=JNE, g=JLE, h=JMP);
+    // Evaluate conditions for cases
+    Not(in=zr, out=notZr);
+    Not(in=ng, out=notNg);
+    And(a=notZr, b=notNg, out=pos);
+    Not(in=pos,  out=notPos);
+    // If case is chosen and conditions are met
+    And(a=JGT, b=pos,    out=doJGT);
+    And(a=JEQ, b=zr,     out=doJEQ);
+    And(a=JGE, b=notNg,  out=doJGE);
+    And(a=JLT, b=ng,     out=doJLT);
+    And(a=JNE, b=notZr,  out=doJNE);    
+    And(a=JLE, b=notPos, out=doJLE);
+    // If any jump is true - prepare jump
+    Or(a=doJGT,   b=doJEQ,   out=doJump1);
+    Or(a=doJGE,   b=doJLT,   out=doJump2);
+    Or(a=doJNE,   b=doJLE,   out=doJump3);
+    Or(a=doJump1, b=doJump2, out=doJump4);
+    Or(a=doJump3, b=JMP,     out=doJump5);
+    Or(a=doJump4, b=doJump5, out=doJump);
+    // If C-instruction do jump
+    Mux(a=false, b=doJump, sel=instruction[15], out=jump);
+    // Signals to PC
+    PC(in=outA ,load=jump ,inc=true ,reset=reset ,out[0..14]=pc);
+}
